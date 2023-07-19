@@ -1,38 +1,44 @@
-#!/usr/bin/env python3
-'''A module with tools for request caching and tracking.
-'''
-import redis
 import requests
-from functools import wraps
-from typing import Callable
+import time
+
+# Dictionary to store cached results and access counts
+cache = {}
 
 
-redis_store = redis.Redis()
-'''The module-level Redis instance.
-'''
+def cache_result(expiration_time):
+    def decorator(func):
+        def wrapper(url):
+            # Check if the URL is already in the cache and not expired
+            if url in cache and time.time() - cache[url]["timestamp"] < expiration_time:
+                print("Using cached result for:", url)
+                cache[url]["count"] += 1
+                return cache[url]["content"]
+            else:
+                print("Fetching from the web for:", url)
+                content = func(url)
+                # Update the cache
+                cache[url] = {
+                    "content": content,
+                    "timestamp": time.time(),
+                    "count": 1,
+                }
+                return content
+
+        return wrapper
+
+    return decorator
 
 
-def data_cacher(method: Callable) -> Callable:
-    '''Caches the output of fetched data.
-    '''
-    @wraps(method)
-    def invoker(url) -> str:
-        '''The wrapper function for caching the output.
-        '''
-        redis_store.incr(f'count:{url}')
-        result = redis_store.get(f'result:{url}')
-        if result:
-            return result.decode('utf-8')
-        result = method(url)
-        redis_store.set(f'count:{url}', 0)
-        redis_store.setex(f'result:{url}', 10, result)
-        return result
-    return invoker
-
-
-@data_cacher
+@cache_result(expiration_time=10)
 def get_page(url: str) -> str:
-    '''Returns the content of a URL after caching the request's response,
-    and tracking the request.
-    '''
-    return requests.get(url).text
+    response = requests.get(url)
+    return response.text
+
+
+if __name__ == "__main__":
+    # Test the get_page function with a slow URL
+    url = "http://slowwly.robertomurray.co.uk/delay/1000/url/https://www.example.com"
+    print(get_page(url))
+    print(get_page(url))  # Should use the cached result and not fetch again for the same URL
+    time.sleep(11)  # Wait for cache to expire
+    print(get_page(url))  # Should fetch again as cache has expired
